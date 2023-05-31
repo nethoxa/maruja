@@ -1,0 +1,38 @@
+#!/bin/bash
+
+if ! ls | grep -q bin; then
+  echo "There is no bin directory, execute run"
+  exit 0
+fi
+
+cd bin
+
+if ! ls | grep -q maruja.ko; then
+  echo "There is no maruja.ko, execute run"
+  exit 0
+fi
+
+printf "\Installing maruja...\n\n"
+read -p "Size of firewall buffer (10 by default ) -> " size
+
+if [[ $tam -le 0 ]]; then
+  echo "Wtf bro"
+  exit 0
+fi
+
+if [[ "$tam" == "" ]]; then
+  sudo insmod maruja.ko
+else
+  sudo insmod maruja.ko fw_ip_count_max="$tam"
+fi
+
+sudo dmesg | tail
+read -p "Maruja's major -> " major
+printf "\Creating /dev/maruja and chmoding...\n"
+
+sudo mknod /dev/maruja c "$major" 0
+sudo chmod 777 /dev/maruja
+ls -l /dev/maruja
+lsmod | grep maruja
+cd ..
+echo "maruja ready"

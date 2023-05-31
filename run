@@ -1,0 +1,226 @@
+#!/bin/bash
+
+# the pseudo cmd to interact with maruja
+function run {
+  printf "\Installing maruja...\n\n"
+  read -p "Size of firewall buffer (10 by default ) -> " size
+
+  if [[ $size -le 0 ]]; then
+    echo "Invalid size, stupid"
+    exit 0
+  fi
+
+  # default params
+  if [[ "$size" == "" ]]; then
+    sudo insmod maruja.ko
+
+  # max number of firewall rules
+  else
+    sudo insmod maruja.ko fw_ip_count_max="$size"
+  fi
+
+  # check everything is fine and print major
+  sudo dmesg | tail
+  read -p "Maruja's major -> " major
+
+  printf "\Creating /dev/maruja and chmoding...\n"
+  sudo mknod /dev/maruja c "$major" 0
+  sudo chmod 777 /dev/maruja
+
+  # pseudo cmd
+  while true;
+  do
+    read -p "IP to block/unblock, or 'dmesg' to see the system log or 'exit' to get out -> " block
+
+    if [[ "$block" == "exit" ]]; then
+      clean
+      echo "maruja deleted"
+      echo "Closing..."
+      exit 0
+
+    elif [[ "$block" == "dmesg" ]]; then
+      sudo dmesg | tail
+
+    # TODO lil bug
+    # elif [[ "$block" == "read" ]]; then
+    #      cat /dev/maruja
+    #      sudo dmesg | tail
+
+    else
+      echo "$block" > /dev/maruja
+      sudo dmesg | tail
+    fi
+  done
+}
+
+# function to clean maruja from the system
+function clean {
+  sudo rm /dev/maruja
+  sudo rmmod maruja
+  sudo dmesg | tail
+}
+
+# --------------------------------------------------------------------------------------------
+# ---------------------------------- DO NOT READ -----------------------------------------------
+# --------------------------------------------------------------------------------------------
+
+echo "Do not be stupid and launch the program from the root of the project (./driver)"
+printf "\n\n"
+read -p "¿Compile or run? (C/R) -> " mode
+
+
+if [[ "$mode" == "R" || "$mode" == "r" ]]; then
+
+  # checks for files
+  if ! ls | grep -q bin; then
+    read -p "There is no bin in project root directory, build, compile and run? (Y/N) -> " yesorno
+
+    if [[ "$yesorno" == "Y" || "$yesorno" == "y" ]]; then
+      mkdir bin
+
+      if ! ls | grep -q src; then
+        printf "There is no src in root directory, no code, closing...\n"
+        exit 0
+      fi
+
+      cd src
+      if ! ls | grep -q Makefile; then
+        printf "There is no Makefile in the src directory, no code, closing...\n"
+        exit 0
+      fi
+
+      if ! ls | grep -q maruja.c; then
+        printf "There is no maruja.c in the src directory, no code, closing...\n"
+        exit 0
+      fi
+
+      # build and deploy with Makefile
+      make
+      cp maruja.ko ../bin/maruja.ko
+      make clean
+
+      # cmd
+      cd ../bin
+      ejecutar
+      limpiar
+
+      cd ..
+      exit 0
+
+    else
+      echo "Closing..."
+      exit 0
+    fi
+
+  # bin dir does exist
+  else
+    cd bin
+
+    # check for driver
+    if ! ls | grep -q maruja.ko; then
+      read -p "There is no driver, do you want to comiple and run (Y/N) -> \n" lqsea
+
+      # ...
+      if [[ "$lqsea" == "Y" || "$lqsea" == "y" ]]; then
+        cd ..
+
+        if ! ls | grep -q src; then
+          printf "There is no src in root directory, no code, closing...\n"
+          exit 0
+        fi
+
+        printf "Compiling...\n\n"
+        cd src
+
+        if ! ls | grep -q Makefile; then
+          printf "There is no Makefile in the src directory, no code, closing...\n"
+          exit 0
+        fi
+
+        if ! ls | grep -q maruja.c; then
+          printf "There is no maruja.c in the src directory, no code, closing...\n"
+          exit 0
+        fi
+
+        make
+        printf "\nMaruja ready, copying maruja.ko to bin and cleaning...\n\n"
+        cp maruja.ko ../bin/maruja.ko
+        make clean
+
+        cd ../bin
+        printf "\Executing..."
+        ejecutar
+
+        printf "\Finished, closing..."
+        cd ..
+        limpiar
+        exit 0
+        
+      else
+        echo "Closing..."
+        exit 0
+      fi
+
+    else
+      printf "\Executing..."
+      run
+      printf "\nFinished, closing..."
+      limpiar
+
+      cd ..
+      exit 0
+    fi
+  fi
+
+# Compile mode
+elif [[ "$mode" == "C" || "$mode" == "c" ]]; then
+
+  if ! ls | grep -q src; then
+    printf "There is no src in root directory, no code, closing...\n"
+    exit 0
+  fi
+
+  printf "Compiling\n\n\n"
+  cd src
+
+  if ! ls | grep -q Makefile; then
+    printf "There is no Makefile in the src directory, no code, closing...\n"
+    exit 0
+  fi
+
+  if ! ls | grep -q maruja.c; then
+    printf "There is no maruja.c in the src directory, no code, closing...\n"
+    exit 0
+  fi
+
+  make
+  printf "\n\nMaruja ready, copying maruja.ko to bin and cleaning...\n\n\n"
+
+  if ! ls .. | grep -q bin; then
+      mkdir ../bin
+  fi
+
+  cp maruja.ko ../bin/maruja.ko
+  make clean
+  cd ..
+  printf "\n\n"
+  read -p "Run? (Y/N) -> " eing
+
+  if [[ "$eing" == "Y" || "$eing" == "y" ]]; then
+    cd bin
+    printf "\Running...\n"
+    run
+    printf "\nFinished, closing...\n"
+    clean
+    cd ..
+    exit 0
+
+  else
+    echo "Closing..."
+    exit 0
+  fi
+
+else
+  echo "Wtf bro"
+  exit 0
+fi

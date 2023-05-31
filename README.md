@@ -3,21 +3,23 @@
 - [MARUJA](#maruja)
   - [Index](#index)
   - [Layout](#layout)
-  - [Descripción](#descripción)
-  - [Uso](#uso)
+  - [Description](#description)
+  - [Usage](#usage)
   - [Tests](#tests)
 
-
 ## Layout
-- `bin` --- donde está el `maruja.ko`
-- `video` --- donde están las capturas
-- `src` --- donde está el `maruja.c` y el `Makefile`
-- `test` --- donde están los tests del `read` y `write`
-- `README.md` --- este archivo
-- `run.sh` --- pseudo terminal para interactuar con el proyecto
-- `install.sh` --- para instalar el driver pero no abrir terminal
+- `bin` --- location of `maruja.ko`
+- `video` --- POC
+- `src` --- location of `maruja.c` and `Makefile`
+- `README.md` --- this file
+- `run.sh` --- pseudo terminal to interact with maruja
+- `install.sh` --- to install the driver without running a pseudo terminal
 
-## Descripción
+## Video
+
+
+
+## Description (in Spanish, (->-_-)->)
 El driver consiste en un firewall en miniatura que por ahora sólo sirve para bloquear IPs. Tiene dos fallos mínimos:
 1. permite que se le pasen cadenas diferentes a una IP, siempre que estén en la longitud establecida (en python haces un isX() y listo, en C era como un gato con un ovillo de lana ~~)
 2. la función `read` no va porque se queda haciendo un bucle infinito llamando a `maruja_read` al hacerle el `cat /dev/maruja`.
@@ -68,14 +70,15 @@ static unsigned int hooker(
 extrae la cabecera IP y la dirección de origen y se la pasa a la función `firewall`, devolviendo su valor (`NF_DROP` o `NF_ACCEPT`)
 
 ```c
+// store ip header and source addr
 char *str = (char *)kmalloc(16, GFP_KERNEL);
-
-// cabecera ip y dirección de origen
 struct iphdr *iph =ip_hdr(skb);
 u32 saddr = ntohl(iph->saddr);
 
 // ip format
 sprintf(str, "%u.%u.%u.%u", IPADDR(saddr));
+
+// printk(KERN_INFO "DBG -> Packet from %s", str);
 
 return firewall(str);
 ```
@@ -154,25 +157,8 @@ para instalarlo. Para el `write`
 echo <IP> > /dev/maruja
 ```
 
-y para el `read` que no funciona
+y para el `read` que NO FUNCIONA
 
 ```bash
 cat /dev/maruja
 ```
-
-## Tests
-Si tienes el driver inicializado y el /dev/maruja con los permisos correspondientes, ejecuta
-
-```bash
-./test/write.sh <IP>
-```
-
-para mandar un `write` request al driver y mostrar el resultado en el log del kernel.
-
-El `read` no lo he implementado por lo de antes, aunque se ejecutaría llamando a
-
-```bash
-./test/read.sh
-```
-
-aunque con el `run.sh` está todo incluido con los checks pertinentes y todo eso.

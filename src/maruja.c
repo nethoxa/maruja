@@ -45,8 +45,8 @@ static char **firewall_rules;
 static unsigned int firewall(char *str) {
     for(int i = 0; i < fw_ip_count; ++i) {
         if (!strcmp(str, firewall_rules[i])) {
-            // regla activada, paquete a la basura
-            // DBG printk(KERN_INFO "Paquete de %s rechazado\n", str); // TODO para ver los rechazados
+            // rule triggered, packet out
+            // DBG printk(KERN_INFO "Packet from %s rejected\n", str);
             return NF_DROP;
         }
     }
@@ -62,29 +62,27 @@ static unsigned int hooker(
 )
 {
     if(!skb) {
-        // si no hay si no hay paquetes, pasamos
+        // idle ~~
         return NF_ACCEPT;
 
     } else {
-        // hay paquete, maruja en marcha
-        // variable para almacenar la ip del paquete
+        // store ip header and source addr
         char *str = (char *)kmalloc(16, GFP_KERNEL);
-
-        // cabecera ip y dirección de origen
         struct iphdr *iph =ip_hdr(skb);
         u32 saddr = ntohl(iph->saddr);
 
         // ip format
         sprintf(str, "%u.%u.%u.%u", IPADDR(saddr));
 
-        // printk(KERN_INFO "DBG -> Paquete de %s", str); // TODO para ver los entrantes
+        // printk(KERN_INFO "DBG -> Packet from %s", str);
 
         return firewall(str);
     }
 }
 
-/* está perfecta, pero en mi ordenador el cat devuelve un de forma infinita la lista de IPs, dale a los DBG para verlo
 
+// TODO lil weird bug
+/*
 static ssize_t maruja_read(
         struct file *file,
         char *buf,
@@ -142,20 +140,20 @@ static ssize_t maruja_write(
     unsigned int i;
 
     if(fw_ip_count == fw_ip_count_max) {
-        printk(KERN_ERR "El firewall está lleno\n");
+        printk(KERN_ERR "Firewall is full\n");
         return -EINVAL;
     }
 
     // sanitizer ~~ kinda
     if(count < IPADDR_MIN_LEN || count > IPADDR_LEN) {
-        printk(KERN_ERR "Mala ip\n");
+        printk(KERN_ERR "Bad ip\n");
         return -EINVAL;
     }
 
-    // bloque para la IP
+    // IP stuff
     ip_to_block = (char*) kmalloc(count, GFP_KERNEL);
     if (ip_to_block == NULL) {
-        printk(KERN_ERR "MARUJA dice que no hay memoria en el maruja_write, wtf\n");
+        printk(KERN_ERR "MARUJA no mem in 1, wtf\n");
         return -ENOMEM;
     }
 
@@ -166,34 +164,34 @@ static ssize_t maruja_write(
     }
 
 
-    // esto me ha dado más problemas que su...
+    // fuck C strings
     if (ip_to_block[count - 1] == '\n') {
         ip_to_block[count - 1] = '\0';
     }
 
-    // si la regla ya estaba, se elimina del firewall
+    // delete rule from firewall if it did exist
     for (i = 0; i < fw_ip_count; ++i) {
-        // DBG printk(KERN_INFO "Comprobando %s con %s de resultado %d\n", ip_to_block, firewall_rules[i], strcmp(ip_to_block, firewall_rules[i]));
+        // DBG printk(KERN_INFO "Checking %s with %s with result %d\n", ip_to_block, firewall_rules[i], strcmp(ip_to_block, firewall_rules[i]));
         if (strcmp(ip_to_block, firewall_rules[i]) == 0) {
             firewall_rules[i] = firewall_rules[fw_ip_count - 1];
             kfree(firewall_rules[fw_ip_count - 1]);
             --fw_ip_count;
-            // TODO nota mental ==> SIEMPRE PON \n EN EL KERNEL
-            printk(KERN_INFO "Regla %s eliminada\n", ip_to_block);
+
+            printk(KERN_INFO "Rule %s deleted\n", ip_to_block);
             kfree(ip_to_block);
             return count;
         }
     }
 
-    // bloque del firewall
+    // firewall stuff
     firewall_rules[fw_ip_count] = (char*) kmalloc(count, GFP_KERNEL);
     if (ip_to_block == NULL) {
-        printk(KERN_ERR "MARUJA dice que no hay memoria en el maruja_write, wtf\n");
+        printk(KERN_ERR "MARUJA no mem in 2, wtf\n");
         return -ENOMEM;
     }
 
-    // añadimos la regla
-    printk(KERN_INFO "Regla %s añadida\n", ip_to_block);
+    // add rule
+    printk(KERN_INFO "Rule %s added\n", ip_to_block);
     firewall_rules[fw_ip_count] = ip_to_block;
     ++fw_ip_count;
     return count;
@@ -219,24 +217,23 @@ static int __init maruja_init(void) {
         nf_register_net_hook(&init_net, hooker_ops_struct);
 
     } else {
-        printk(KERN_ERR "MARUJA dice que no hay memoria en el maruja_init, wtf\n");
+        printk(KERN_ERR "MARUJA no mem in 3, wtf\n");
         return -ENOMEM;
 
     }
 
-    // rellenar el struct II...
     fops.owner = THIS_MODULE;
     fops.write = maruja_write;
-    // fops.read = maruja_read; // TODO para que no pete la comento
+    // fops.read = maruja_read; TODO lil weird bug
 
     major = register_chrdev(0, "MARUJA", &fops);
     if(major < 0) {
-        printk(KERN_ERR "MARUJA dice que no se puede registrar como chardev\n");
+        printk(KERN_ERR "MARUJA no chardev\n");
         return ERROR;
 
     }
 
-    printk(KERN_INFO "MARUJA chardev registrado correctamente con major %d y tamaño del firewall de %d\n", major, fw_ip_count_max);
+    printk(KERN_INFO "MARUJA registered chardev correctly with major %d and firewall size of %d\n", major, fw_ip_count_max);
 
     return OK;
 }
@@ -252,7 +249,7 @@ static void __exit maruja_exit(void) {
     nf_unregister_net_hook(&init_net, hooker_ops_struct);
     kfree(hooker_ops_struct);
     unregister_chrdev(major, "MARUJA");
-    printk(KERN_INFO "MARUJA se ha ido\n");
+    printk(KERN_INFO "MARUJA bye bye\n");
 }
 
 module_init(maruja_init);
