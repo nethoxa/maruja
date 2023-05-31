@@ -16,8 +16,7 @@
 - `install.sh` --- to install the driver without running a pseudo terminal
 
 ## Video
-
-
+https://github.com/erebus-eth/maruja/assets/135072738/bcf61fe8-e5b4-43bb-942a-dd25a9ea40bf
 
 ## Description (in Spanish, (->-_-)->)
 El driver consiste en un firewall en miniatura que por ahora sólo sirve para bloquear IPs. Tiene dos fallos mínimos:
