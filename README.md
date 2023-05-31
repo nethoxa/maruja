@@ -3,9 +3,9 @@
 - [MARUJA](#maruja)
   - [Index](#index)
   - [Layout](#layout)
-  - [Description](#description)
+  - [Video](#video)
+  - [Description](#description-(in Spanish,-(->-_-)->))
   - [Usage](#usage)
-  - [Tests](#tests)
 
 ## Layout
 - `bin` --- location of `maruja.ko`
@@ -137,7 +137,7 @@ static void __exit maruja_exit(void)
 simplemente libera la memoria perteneciente a las reglas del `firewall`, elimina el hooker de red y el chrdev y libera la memoria de los structs asociados, indicando con un mensaje en el log que se ha eliminado correctamente del sistema.
 
 
-## Uso
+## Usage
 Abre una terminal en el directorio raíz del proyecto y ejecuta
 
 ```bash
