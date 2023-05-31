@@ -4,7 +4,7 @@
   - [Index](#index)
   - [Layout](#layout)
   - [Video](#video)
-  - [Description](#description-(in Spanish,-(->-_-)->))
+  - [Description](#description-\(in Spanish,-\(->-_-\)->\))
   - [Usage](#usage)
 
 ## Layout
