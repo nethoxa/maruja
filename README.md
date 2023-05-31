@@ -4,7 +4,7 @@
   - [Index](#index)
   - [Layout](#layout)
   - [Video](#video)
-  - [Description](#description-\(in Spanish,-\(->-_-\)->\))
+  - [Description](#description)
   - [Usage](#usage)
 
 ## Layout
@@ -18,7 +18,7 @@
 ## Video
 https://github.com/erebus-eth/maruja/assets/135072738/bcf61fe8-e5b4-43bb-942a-dd25a9ea40bf
 
-## Description (in Spanish, (->-_-)->)
+## Description
 El driver consiste en un firewall en miniatura que por ahora sólo sirve para bloquear IPs. Tiene dos fallos mínimos:
 1. permite que se le pasen cadenas diferentes a una IP, siempre que estén en la longitud establecida (en python haces un isX() y listo, en C era como un gato con un ovillo de lana ~~)
 2. la función `read` no va porque se queda haciendo un bucle infinito llamando a `maruja_read` al hacerle el `cat /dev/maruja`.
