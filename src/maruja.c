@@ -7,18 +7,17 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/ip.h>
-#include <linux/tcp.h>
-#include <linux/udp.h>
 #include <linux/string.h>
+#include <linux/inet.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
 
 
 /**********************
         DEFINES
  **********************/
 #define OK 0
-#define ERROR -1
 #define IPADDR_LEN 16
-#define IPADDR_MIN_LEN 8
 #define IPADDR(addr) ((unsigned char *)&addr)[3], \
                      ((unsigned char *)&addr)[2], \
                      ((unsigned char *)&addr)[1], \
@@ -29,26 +28,36 @@
       GLOBAL VARS
  **********************/
 static unsigned int fw_ip_count_max = 10;
-module_param(fw_ip_count_max, int, S_IWUSR | S_IRUSR);
+module_param(fw_ip_count_max, uint, S_IWUSR | S_IRUSR);
 
-static int major;
+static dev_t dev_num;
+static struct cdev maruja_cdev;
+static struct class *maruja_class;
 static unsigned int fw_ip_count = 0;
 static struct nf_hook_ops *hooker_ops_struct = NULL;
-static struct file_operations fops;
-
 static char **firewall_rules;
+static DEFINE_RWLOCK(fw_lock);
+
+
+/**********************
+       DEVNODE
+ **********************/
+static char *maruja_devnode(const struct device *dev, umode_t *mode)
+{
+    if (mode)
+        *mode = 0666;
+    return NULL;
+}
 
 
 /**********************
          FUNCS
  **********************/
-static unsigned int firewall(char *str) {
-    for(int i = 0; i < fw_ip_count; ++i) {
-        if (!strcmp(str, firewall_rules[i])) {
-            // rule triggered, packet out
-            // DBG printk(KERN_INFO "Packet from %s rejected\n", str);
+static unsigned int firewall(const char *str)
+{
+    for (int i = 0; i < fw_ip_count; ++i) {
+        if (!strcmp(str, firewall_rules[i]))
             return NF_DROP;
-        }
     }
 
     return NF_ACCEPT;
@@ -58,202 +67,236 @@ static unsigned int firewall(char *str) {
 static unsigned int hooker(
         void *priv,
         struct sk_buff *skb,
-        const struct nf_hook_state *state
-)
+        const struct nf_hook_state *state)
 {
-    if(!skb) {
-        // idle ~~
+    unsigned int ret;
+    char str[IPADDR_LEN];
+    struct iphdr *iph;
+    u32 saddr;
+
+    if (!skb)
         return NF_ACCEPT;
 
-    } else {
-        // store ip header and source addr
-        char *str = (char *)kmalloc(16, GFP_KERNEL);
-        struct iphdr *iph =ip_hdr(skb);
-        u32 saddr = ntohl(iph->saddr);
+    iph = ip_hdr(skb);
+    saddr = ntohl(iph->saddr);
+    sprintf(str, "%u.%u.%u.%u", IPADDR(saddr));
 
-        // ip format
-        sprintf(str, "%u.%u.%u.%u", IPADDR(saddr));
+    read_lock_bh(&fw_lock);
+    ret = firewall(str);
+    read_unlock_bh(&fw_lock);
 
-        // printk(KERN_INFO "DBG -> Packet from %s", str);
-
-        return firewall(str);
-    }
+    return ret;
 }
 
 
-// TODO lil weird bug
-/*
 static ssize_t maruja_read(
         struct file *file,
-        char *buf,
+        char __user *buf,
         size_t count,
-        loff_t *offset
-)
+        loff_t *offset)
 {
-    // tamaño de todas las cadenas más separador
     size_t len = 0;
-    for (int i = 0; i < fw_ip_count; ++i) {
-        len += strlen(firewall_rules[i]) + 1; // Add 1 for the separator
+    char *temp_buf;
+    int index = 0;
+
+    if (*offset > 0)
+        return 0;
+
+    read_lock_bh(&fw_lock);
+
+    for (int i = 0; i < fw_ip_count; ++i)
+        len += strlen(firewall_rules[i]) + 1;
+
+    if (len == 0) {
+        read_unlock_bh(&fw_lock);
+        return 0;
     }
 
-    // checks
     if (count < len) {
-        printk(KERN_ERR "El buffer para copiar todas las reglas es muy pequeño\n");
+        read_unlock_bh(&fw_lock);
         return -EINVAL;
     }
 
-    char *temp_buf = (char *)kmalloc(len, GFP_KERNEL);
-    if (temp_buf == NULL) {
-        printk(KERN_ERR "No hay suficiente memoria en maruja_read, wtf\n");
+    temp_buf = kmalloc(len, GFP_ATOMIC);
+    if (!temp_buf) {
+        read_unlock_bh(&fw_lock);
         return -ENOMEM;
     }
 
-    // concatenamos
-    int index = 0;
     for (int i = 0; i < fw_ip_count; ++i) {
         sprintf(temp_buf + index, "%s\n", firewall_rules[i]);
-        index += strlen(firewall_rules[i]) + 1; // Add 1 for the separator
-        // DBG printk(KERN_INFO "EING -> %s y %d\n", temp_buf, fw_ip_count);
+        index += strlen(firewall_rules[i]) + 1;
     }
 
-    // copiamos al buffer
+    read_unlock_bh(&fw_lock);
+
     if (copy_to_user(buf, temp_buf, len)) {
-        printk(KERN_ERR "Failed to copy rules to user buffer\n");
         kfree(temp_buf);
         return -EFAULT;
     }
 
-
     kfree(temp_buf);
+    *offset = len;
     return len;
-}*/
+}
 
 
 static ssize_t maruja_write(
         struct file *file,
-        const char *buf,
+        const char __user *buf,
         size_t count,
-        loff_t *offset
-)
+        loff_t *offset)
 {
+    char input[IPADDR_LEN];
     char *ip_to_block;
     unsigned int i;
+    __be32 addr;
+    u8 *b;
 
-    if(fw_ip_count == fw_ip_count_max) {
-        printk(KERN_ERR "Firewall is full\n");
+    if (count == 0 || count > IPADDR_LEN)
         return -EINVAL;
-    }
 
-    // sanitizer ~~ kinda
-    if(count < IPADDR_MIN_LEN || count > IPADDR_LEN) {
-        printk(KERN_ERR "Bad ip\n");
-        return -EINVAL;
-    }
-
-    // IP stuff
-    ip_to_block = (char*) kmalloc(count, GFP_KERNEL);
-    if (ip_to_block == NULL) {
-        printk(KERN_ERR "MARUJA no mem in 1, wtf\n");
-        return -ENOMEM;
-    }
-
-    // copy
-    if (copy_from_user(ip_to_block, buf, count) != 0) {
-        kfree(ip_to_block);
+    if (copy_from_user(input, buf, count))
         return -EFAULT;
-    }
 
+    input[count - 1] = '\0';
 
-    // fuck C strings
-    if (ip_to_block[count - 1] == '\n') {
-        ip_to_block[count - 1] = '\0';
-    }
+    if (!in4_pton(input, -1, (u8 *)&addr, -1, NULL))
+        return -EINVAL;
 
-    // delete rule from firewall if it did exist
+    // normalize to canonical form so strcmp always matches the hook format
+    ip_to_block = kmalloc(IPADDR_LEN, GFP_KERNEL);
+    if (!ip_to_block)
+        return -ENOMEM;
+
+    b = (u8 *)&addr;
+    snprintf(ip_to_block, IPADDR_LEN, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+
+    write_lock_bh(&fw_lock);
+
+    // toggle: remove rule if it already exists
     for (i = 0; i < fw_ip_count; ++i) {
-        // DBG printk(KERN_INFO "Checking %s with %s with result %d\n", ip_to_block, firewall_rules[i], strcmp(ip_to_block, firewall_rules[i]));
         if (strcmp(ip_to_block, firewall_rules[i]) == 0) {
+            kfree(firewall_rules[i]);
             firewall_rules[i] = firewall_rules[fw_ip_count - 1];
-            kfree(firewall_rules[fw_ip_count - 1]);
+            firewall_rules[fw_ip_count - 1] = NULL;
             --fw_ip_count;
 
-            printk(KERN_INFO "Rule %s deleted\n", ip_to_block);
+            write_unlock_bh(&fw_lock);
+            printk(KERN_INFO "MARUJA: rule %s removed\n", ip_to_block);
             kfree(ip_to_block);
             return count;
         }
     }
 
-    // firewall stuff
-    firewall_rules[fw_ip_count] = (char*) kmalloc(count, GFP_KERNEL);
-    if (ip_to_block == NULL) {
-        printk(KERN_ERR "MARUJA no mem in 2, wtf\n");
-        return -ENOMEM;
+    if (fw_ip_count >= fw_ip_count_max) {
+        write_unlock_bh(&fw_lock);
+        kfree(ip_to_block);
+        return -ENOSPC;
     }
 
-    // add rule
-    printk(KERN_INFO "Rule %s added\n", ip_to_block);
     firewall_rules[fw_ip_count] = ip_to_block;
     ++fw_ip_count;
+
+    write_unlock_bh(&fw_lock);
+    printk(KERN_INFO "MARUJA: rule %s added\n", ip_to_block);
     return count;
 }
 
 
+static const struct file_operations fops = {
+    .owner = THIS_MODULE,
+    .read  = maruja_read,
+    .write = maruja_write,
+};
 
-static int __init maruja_init(void) {
-    firewall_rules = (char **)kmalloc(sizeof(char), GFP_KERNEL);
-    if(firewall_rules == NULL) {
-        return -ENOMEM;
-    }
 
+static int __init maruja_init(void)
+{
+    int ret;
 
-    // rellenar el struct I...
-    hooker_ops_struct = (struct nf_hook_ops*)kcalloc(1, sizeof(struct nf_hook_ops), GFP_KERNEL);
-    if (hooker_ops_struct != NULL) {
-        hooker_ops_struct->hook = (nf_hookfn*)hooker;
-        hooker_ops_struct->hooknum = NF_INET_PRE_ROUTING;
-        hooker_ops_struct->pf = NFPROTO_IPV4;
-        hooker_ops_struct->priority = NF_IP_PRI_FIRST + 1;
-
-        nf_register_net_hook(&init_net, hooker_ops_struct);
-
-    } else {
-        printk(KERN_ERR "MARUJA no mem in 3, wtf\n");
+    firewall_rules = kcalloc(fw_ip_count_max, sizeof(char *), GFP_KERNEL);
+    if (!firewall_rules)
         return -ENOMEM;
 
+    hooker_ops_struct = kcalloc(1, sizeof(struct nf_hook_ops), GFP_KERNEL);
+    if (!hooker_ops_struct) {
+        ret = -ENOMEM;
+        goto err_hook_alloc;
     }
 
-    fops.owner = THIS_MODULE;
-    fops.write = maruja_write;
-    // fops.read = maruja_read; TODO lil weird bug
+    hooker_ops_struct->hook     = (nf_hookfn *)hooker;
+    hooker_ops_struct->hooknum  = NF_INET_PRE_ROUTING;
+    hooker_ops_struct->pf       = NFPROTO_IPV4;
+    hooker_ops_struct->priority = NF_IP_PRI_FIRST + 1;
 
-    major = register_chrdev(0, "MARUJA", &fops);
-    if(major < 0) {
-        printk(KERN_ERR "MARUJA no chardev\n");
-        return ERROR;
+    ret = nf_register_net_hook(&init_net, hooker_ops_struct);
+    if (ret)
+        goto err_hook_reg;
 
+    ret = alloc_chrdev_region(&dev_num, 0, 1, "maruja");
+    if (ret < 0)
+        goto err_chrdev_alloc;
+
+    cdev_init(&maruja_cdev, &fops);
+    ret = cdev_add(&maruja_cdev, dev_num, 1);
+    if (ret < 0)
+        goto err_cdev_add;
+
+    maruja_class = class_create("maruja");
+    if (IS_ERR(maruja_class)) {
+        ret = PTR_ERR(maruja_class);
+        goto err_class;
+    }
+    maruja_class->devnode = maruja_devnode;
+
+    if (IS_ERR(device_create(maruja_class, NULL, dev_num, NULL, "maruja"))) {
+        ret = -ENOMEM;
+        goto err_device;
     }
 
-    printk(KERN_INFO "MARUJA registered chardev correctly with major %d and firewall size of %d\n", major, fw_ip_count_max);
-
+    printk(KERN_INFO "MARUJA: loaded (max %d rules)\n", fw_ip_count_max);
     return OK;
+
+err_device:
+    class_destroy(maruja_class);
+err_class:
+    cdev_del(&maruja_cdev);
+err_cdev_add:
+    unregister_chrdev_region(dev_num, 1);
+err_chrdev_alloc:
+    nf_unregister_net_hook(&init_net, hooker_ops_struct);
+err_hook_reg:
+    kfree(hooker_ops_struct);
+err_hook_alloc:
+    kfree(firewall_rules);
+    return ret;
 }
 
 
-static void __exit maruja_exit(void) {
-    if(fw_ip_count) {
-        for(int i = 0; i < fw_ip_count; ++i) {
-            kfree(firewall_rules[i]);
-        }
-    }
+static void __exit maruja_exit(void)
+{
+    write_lock_bh(&fw_lock);
+    for (int i = 0; i < fw_ip_count; ++i)
+        kfree(firewall_rules[i]);
+    write_unlock_bh(&fw_lock);
 
+    device_destroy(maruja_class, dev_num);
+    class_destroy(maruja_class);
+    cdev_del(&maruja_cdev);
+    unregister_chrdev_region(dev_num, 1);
     nf_unregister_net_hook(&init_net, hooker_ops_struct);
     kfree(hooker_ops_struct);
-    unregister_chrdev(major, "MARUJA");
-    printk(KERN_INFO "MARUJA bye bye\n");
+    kfree(firewall_rules);
+
+    printk(KERN_INFO "MARUJA: unloaded\n");
 }
+
 
 module_init(maruja_init);
 module_exit(maruja_exit);
 
 MODULE_LICENSE("GPL");
-
+MODULE_AUTHOR("nethoxa");
+MODULE_DESCRIPTION("Lightweight IP-based packet filtering using Netfilter");
+MODULE_VERSION("0.2");

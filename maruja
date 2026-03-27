@@ -1,0 +1,157 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC_DIR="$SCRIPT_DIR/src"
+BIN_DIR="$SCRIPT_DIR/bin"
+MODULE="maruja"
+DEVICE="/dev/maruja"
+
+usage() {
+    echo "Usage: maruja <command> [args]"
+    echo ""
+    echo "Commands:"
+    echo "  compile                  Build the kernel module"
+    echo "  install [max_rules]      Load the module (default: 10 max rules)"
+    echo "  uninstall                Unload the module"
+    echo "  block <ip>               Block an IP address"
+    echo "  unblock <ip>             Unblock an IP address"
+    echo "  list                     Show active rules"
+    echo "  log                      Show recent kernel log entries"
+    exit 1
+}
+
+cmd_compile() {
+    if [ ! -f "$SRC_DIR/Makefile" ] || [ ! -f "$SRC_DIR/maruja.c" ]; then
+        echo "error: missing source files in $SRC_DIR"
+        exit 1
+    fi
+
+    echo "Compiling..."
+    if ! make -C "$SRC_DIR"; then
+        echo "error: compilation failed"
+        exit 1
+    fi
+
+    mkdir -p "$BIN_DIR"
+    cp "$SRC_DIR/maruja.ko" "$BIN_DIR/maruja.ko"
+    make -C "$SRC_DIR" clean
+
+    echo "Done. Module at $BIN_DIR/maruja.ko"
+}
+
+cmd_install() {
+    local max_rules="${1:-10}"
+
+    if [ ! -f "$BIN_DIR/maruja.ko" ]; then
+        echo "error: maruja.ko not found, run 'maruja compile' first"
+        exit 1
+    fi
+
+    if lsmod | grep -q "^${MODULE} "; then
+        echo "error: maruja is already loaded"
+        exit 1
+    fi
+
+    if ! sudo insmod "$BIN_DIR/maruja.ko" fw_ip_count_max="$max_rules"; then
+        echo "error: failed to load module"
+        exit 1
+    fi
+
+    echo "Loaded with max $max_rules rules"
+    echo "Device available at $DEVICE"
+}
+
+cmd_uninstall() {
+    if ! lsmod | grep -q "^${MODULE} "; then
+        echo "error: maruja is not loaded"
+        exit 1
+    fi
+
+    sudo rmmod "$MODULE"
+    echo "Unloaded"
+}
+
+cmd_block() {
+    local ip="$1"
+    if [ -z "$ip" ]; then
+        echo "error: no IP specified"
+        usage
+    fi
+
+    if [ ! -e "$DEVICE" ]; then
+        echo "error: $DEVICE not found, run 'maruja install' first"
+        exit 1
+    fi
+
+    # check if already blocked
+    if cat "$DEVICE" 2>/dev/null | grep -q "^${ip}$"; then
+        echo "$ip is already blocked"
+        return 0
+    fi
+
+    echo "$ip" > "$DEVICE"
+    if [ $? -eq 0 ]; then
+        echo "Blocked $ip"
+    else
+        echo "error: failed to block $ip (invalid IP?)"
+        exit 1
+    fi
+}
+
+cmd_unblock() {
+    local ip="$1"
+    if [ -z "$ip" ]; then
+        echo "error: no IP specified"
+        usage
+    fi
+
+    if [ ! -e "$DEVICE" ]; then
+        echo "error: $DEVICE not found, run 'maruja install' first"
+        exit 1
+    fi
+
+    # check if it's actually blocked
+    if ! cat "$DEVICE" 2>/dev/null | grep -q "^${ip}$"; then
+        echo "$ip is not blocked"
+        return 0
+    fi
+
+    # write again to toggle it off
+    echo "$ip" > "$DEVICE"
+    if [ $? -eq 0 ]; then
+        echo "Unblocked $ip"
+    else
+        echo "error: failed to allow $ip"
+        exit 1
+    fi
+}
+
+cmd_list() {
+    if [ ! -e "$DEVICE" ]; then
+        echo "error: $DEVICE not found, run 'maruja install' first"
+        exit 1
+    fi
+
+    local rules
+    rules=$(cat "$DEVICE" 2>/dev/null)
+    if [ -z "$rules" ]; then
+        echo "No active rules"
+    else
+        echo "$rules"
+    fi
+}
+
+cmd_log() {
+    sudo dmesg | grep -i maruja | tail -20
+}
+
+case "${1:-}" in
+    compile)    cmd_compile ;;
+    install)    cmd_install "$2" ;;
+    uninstall)  cmd_uninstall ;;
+    block)      cmd_block "$2" ;;
+    unblock)    cmd_unblock "$2" ;;
+    list)       cmd_list ;;
+    log)        cmd_log ;;
+    *)          usage ;;
+esac
