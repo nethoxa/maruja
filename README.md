@@ -39,7 +39,3 @@ https://github.com/erebus-eth/maruja/assets/135072738/bcf61fe8-e5b4-43bb-942a-dd
 # Unload
 ./maruja uninstall
 ```
-
-## License
-
-GPL v2
