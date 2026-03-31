@@ -1,5 +1,7 @@
 # Maruja
 
+**NOTE**: this was wrote in 2023 during my second year at collegue, the new commits are updates to the README mostly to make it more *"pretty"* for ppl that does not know me (you)
+
 A lightweight Linux kernel module for runtime IP blocking using Netfilter. Intercepts incoming IPv4 packets at `NF_INET_PRE_ROUTING` and drops those matching a user-defined blocklist. Rules are managed at runtime through the `maruja` CLI. The device node (`/dev/maruja`) is created automatically via udev.
 
 ## Demo
